@@ -5,12 +5,14 @@
 #include <termios.h>
 #include <unistd.h>
 
+
+struct termios orig_termios;
+
+/*** terminal ***/
 void die(const char *s) {
   perror(s);
   exit(1);
 }
-
-struct termios orig_termios;
 
 void disableRawMode() {
   if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios) == -1)
@@ -32,6 +34,7 @@ void enableRawMode() {
 /*** defines ***/
 #define CTRL_KEY(k) ((k) & 0x1f)
 
+/*** init ***/
 int main() {
   enableRawMode();
 
