@@ -5,10 +5,19 @@
 #include <termios.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
+#include <string.h>
+
+
+/*** defines ***/
+#define CTRL_KEY(k) ((k) & 0x1f)
+#define KILO_VERSION "0.0.1"
+#define ABUF_INIT {NULL, 0}
+
 
 
 /*** data ***/
 struct editorConfig {
+  int cx, cy;
   int screenrows;
   int screencols;
   struct termios orig_termios;
@@ -65,54 +74,115 @@ int getWindowSize(int *rows, int *cols) {
 }
 
 
+/*** append buffer ***/
+struct abuf {
+  char *b;
+  int len;
+};
 
-/*** defines ***/
-#define CTRL_KEY(k) ((k) & 0x1f)
 
-/*** output ***/
-void editorDrawRows() {
+void abAppend(struct abuf *ab, const char *s, int len) {
+  char *new = realloc(ab->b, ab->len + len);
+  if (new == NULL) return;
+  memcpy(&new[ab->len], s, len);
+  ab->b = new;
+  ab->len += len;
+}
+
+void abFree(struct abuf *ab) {
+  free(ab->b);
+}
+
+
+void editorDrawRows(struct abuf *ab) {
   int y;
   for (y = 0; y < E.screenrows; y++) {
-    write(STDOUT_FILENO, "~", 1);
+    if (y == E.screenrows / 3) {
+      char welcome[80];
+      int welcomelen = snprintf(welcome, sizeof(welcome),
+        "Kilo editor -- version %s", KILO_VERSION);
+      if (welcomelen > E.screencols) welcomelen = E.screencols;
+      int padding = (E.screencols - welcomelen) / 2;
+      if (padding) {
+        abAppend(ab, "~", 1);
+        padding--;
+      }
+      while (padding--) abAppend(ab, " ", 1);
+      abAppend(ab, welcome, welcomelen);
+    } else {
+      abAppend(ab, "~", 1);
+    }
+    abAppend(ab, "\x1b[K", 3);
     if (y < E.screenrows - 1) {
-      write(STDOUT_FILENO, "\r\n", 2);
+      abAppend(ab, "\r\n", 2);
     }
   }
 }
 
 void editorRefreshScreen() {
-  write(STDOUT_FILENO, "\x1b[2J", 4);
-  write(STDOUT_FILENO, "\x1b[H", 3);
-  editorDrawRows();
-  write(STDOUT_FILENO, "\x1b[H", 3);
+  struct abuf ab = ABUF_INIT;
+  abAppend(&ab, "\x1b[?25l", 6);
+  abAppend(&ab, "\x1b[H", 3);
+  editorDrawRows(&ab);
+  char buf[32];
+  snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cy + 1, E.cx + 1);
+  abAppend(&ab, buf, strlen(buf));
+  abAppend(&ab, "\x1b[?25h", 6);
+  write(STDOUT_FILENO, ab.b, ab.len);
+  abFree(&ab);
 }
 
 
 
-
 /*** input ***/
+
+void editorMoveCursor(char key) {
+  switch (key) {
+    case 'a':
+      E.cx--;
+      break;
+    case 'd':
+      E.cx++;
+      break;
+    case 'w':
+      E.cy--;
+      break;
+    case 's':
+      E.cy++;
+      break;
+  }
+}
+
 void editorProcessKeypress() {
   char c = editorReadKey();
   switch (c) {
-    case CTRL_KEY('c'):
+    case CTRL_KEY('q'):
       write(STDOUT_FILENO, "\x1b[2J", 4);
       write(STDOUT_FILENO, "\x1b[H", 3);
       exit(0);
+      break;
+    case 'w':
+    case 's':
+    case 'a':
+    case 'd':
+      editorMoveCursor(c);
       break;
   }
 }
 
 /*** init ***/
 void initEditor() {
+  E.cx = 0;
+  E.cy = 0;
   if (getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
 }
 
 int main() {
   enableRawMode();
   initEditor();
-  editorRefreshScreen();
 
   while (1) {
+    editorRefreshScreen();
     editorProcessKeypress();
   }
 
